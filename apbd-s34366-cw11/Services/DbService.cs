@@ -1,5 +1,6 @@
 ﻿using apbd_s34366_cw11.Data;
 using apbd_s34366_cw11.DTOs;
+using apbd_s34366_cw11.Models;
 using Microsoft.EntityFrameworkCore;
 
 namespace apbd_s34366_cw11.Services;
@@ -74,5 +75,55 @@ public class DbService : IDbService
                 }).ToList()
             })
             .ToListAsync();
+    }
+    
+    public async Task AssignBedAsync(string pesel, BedAssignmentRequestDto dto)
+    {
+        var patientExists = await _context.Patients.AnyAsync(p => p.Pesel == pesel);
+        if (!patientExists)
+        {
+            throw new KeyNotFoundException($"Patient with PESEL '{pesel}' does not exist.");
+        }
+
+        var ward = await _context.Wards.FirstOrDefaultAsync(w => w.Name == dto.Ward);
+        if (ward == null)
+        {
+            throw new KeyNotFoundException($"Ward '{dto.Ward}' does not exist.");
+        }
+
+        var bedType = await _context.BedTypes.FirstOrDefaultAsync(bt => bt.Name == dto.BedType);
+        if (bedType == null)
+        {
+            throw new KeyNotFoundException($"Bed type '{dto.BedType}' does not exist.");
+        }
+
+        var maxSqlDate = new DateTime(3000, 1, 1);
+
+        var reqStart = dto.From;
+        var reqEnd = dto.To ?? maxSqlDate;
+
+        var availableBed = await _context.Beds
+            .Where(b => b.Room.WardId == ward.Id && b.BedTypeId == bedType.Id)
+            .Where(b => !_context.BedAssignments.Any(ba =>
+                ba.BedId == b.Id &&
+                reqStart < (ba.To ?? maxSqlDate) &&
+                reqEnd > ba.From))
+            .FirstOrDefaultAsync();
+
+        if (availableBed == null)
+        {
+            throw new InvalidOperationException($"No available bed of type '{dto.BedType}' found in ward '{dto.Ward}' for the requested period.");
+        }
+
+        var newAssignment = new BedAssignment
+        {
+            PatientPesel = pesel,
+            BedId = availableBed.Id,
+            From = dto.From,
+            To = dto.To
+        };
+
+        _context.BedAssignments.Add(newAssignment);
+        await _context.SaveChangesAsync();
     }
 }
